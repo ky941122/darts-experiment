@@ -42,8 +42,17 @@ class SearchConfig(BaseConfig):
     def build_parser(self):
         parser = get_parser("Search config")
         parser.add_argument('--name', required=True)
-        parser.add_argument('--dataset', required=True, help='CIFAR10 / MNIST / FashionMNIST')
-        parser.add_argument('--batch_size', type=int, default=64, help='batch size')
+        parser.add_argument('--is_cuda', type=bool, default=True)
+        parser.add_argument('--vocab_size', type=int, default=314041)
+        parser.add_argument('--embedding_dim', type=int, default=200)
+        parser.add_argument('--voice_embed_dim', type=int, default=64)
+        parser.add_argument('--alpha', type=int, default=10)
+        parser.add_argument('--max_sent_nums', type=int, default=200)
+        parser.add_argument('--max_word_nums', type=int, default=52)
+        parser.add_argument('--n_classes', type=int, default=2)
+        parser.add_argument('--n_nodes', type=int, default=8)
+
+        parser.add_argument('--batch_size', type=int, default=3, help='batch size')
         parser.add_argument('--w_lr', type=float, default=0.025, help='lr for weights')
         parser.add_argument('--w_lr_min', type=float, default=0.001, help='minimum lr for weights')
         parser.add_argument('--w_momentum', type=float, default=0.9, help='momentum for weights')
@@ -56,12 +65,13 @@ class SearchConfig(BaseConfig):
                             '`all` indicates use all gpus.')
         parser.add_argument('--epochs', type=int, default=50, help='# of training epochs')
         parser.add_argument('--init_channels', type=int, default=16)
-        parser.add_argument('--layers', type=int, default=8, help='# of layers')
+        parser.add_argument('--layers', type=int, default=3, help='# of layers')
         parser.add_argument('--seed', type=int, default=2, help='random seed')
         parser.add_argument('--workers', type=int, default=4, help='# of workers')
         parser.add_argument('--alpha_lr', type=float, default=3e-4, help='lr for alpha')
         parser.add_argument('--alpha_weight_decay', type=float, default=1e-3,
                             help='weight decay for alpha')
+        parser.add_argument('--pretrained_w2v_path', type=str, default='/share/kangyu/speaker_verification/data/w2v_online/0718_dahaipretrain/w2v_mtrx.npy')
 
         return parser
 

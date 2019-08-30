@@ -40,12 +40,26 @@ class SearchCell(nn.Module):
                 op = ops.MixedOp(C, stride)
                 self.dag[i].append(op)
 
+        # self.dag是个长度为n_nodes的list，list里每个元素也是个list，self.dag[i]长度为2+i，每个元素为一个MixedOp。
+        # self.dag[i] = [
+        #       MixedOp
+        #         ...   (一共i+2个)
+        #       MixedOp
+        # ]
+
     def forward(self, s0, s1, w_dag):
+        """
+        Args:
+        :param s0:
+        :param s1:
+        :param w_dag: list, len=n_nodes, each element is a weight matrix after softmax.
+        :return:
+        """
         s0 = self.preproc0(s0)
         s1 = self.preproc1(s1)
 
         states = [s0, s1]
-        for edges, w_list in zip(self.dag, w_dag):
+        for edges, w_list in zip(self.dag, w_dag):   # w_list:[i+2, n_ops]
             s_cur = sum(edges[i](s, w) for i, (s, w) in enumerate(zip(states, w_list)))
             states.append(s_cur)
 

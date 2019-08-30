@@ -16,7 +16,7 @@ class Architect():
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
 
-    def virtual_step(self, trn_X, trn_y, xi, w_optim):
+    def virtual_step(self, trn_X, trn_y, xi, w_optim, sent_nums, voice_embeded):
         """
         Compute unrolled weight w' (virtual step)
 
@@ -31,7 +31,7 @@ class Architect():
             w_optim: weights optimizer
         """
         # forward & calc loss
-        loss = self.net.loss(trn_X, trn_y) # L_trn(w)
+        loss, _ = self.net.loss(trn_X, trn_y, sent_nums, voice_embeded) # L_trn(w)
 
         # compute gradient
         gradients = torch.autograd.grad(loss, self.net.weights())
@@ -49,17 +49,19 @@ class Architect():
             for a, va in zip(self.net.alphas(), self.v_net.alphas()):
                 va.copy_(a)
 
-    def unrolled_backward(self, trn_X, trn_y, val_X, val_y, xi, w_optim):
+    def unrolled_backward(self, trn_X, trn_y, val_X, val_y, xi, w_optim,
+                          trn_sent_nums, trn_voice_embeded,
+                          val_sent_nums, val_voice_embeded):
         """ Compute unrolled loss and backward its gradients
         Args:
             xi: learning rate for virtual gradient step (same as net lr)
             w_optim: weights optimizer - for virtual step
         """
         # do virtual step (calc w`)
-        self.virtual_step(trn_X, trn_y, xi, w_optim)
+        self.virtual_step(trn_X, trn_y, xi, w_optim, trn_sent_nums, trn_voice_embeded)
 
         # calc unrolled loss
-        loss = self.v_net.loss(val_X, val_y) # L_val(w`)
+        loss, _ = self.v_net.loss(val_X, val_y, val_sent_nums, val_voice_embeded) # L_val(w`)
 
         # compute gradient
         v_alphas = tuple(self.v_net.alphas())
@@ -68,19 +70,19 @@ class Architect():
         dalpha = v_grads[:len(v_alphas)]
         dw = v_grads[len(v_alphas):]
 
-        hessian = self.compute_hessian(dw, trn_X, trn_y)
+        hessian = self.compute_hessian(dw, trn_X, trn_y, trn_sent_nums, trn_voice_embeded)
 
         # update final gradient = dalpha - xi*hessian
         with torch.no_grad():
             for alpha, da, h in zip(self.net.alphas(), dalpha, hessian):
-                alpha.grad = da - xi*h
+                alpha.grad = da - xi*h    # 公式(7)
 
-    def compute_hessian(self, dw, trn_X, trn_y):
+    def compute_hessian(self, dw, trn_X, trn_y, sent_nums, voice_embeded):
         """
         dw = dw` { L_val(w`, alpha) }
         w+ = w + eps * dw
         w- = w - eps * dw
-        hessian = (dalpha { L_trn(w+, alpha) } - dalpha { L_trn(w-, alpha) }) / (2*eps)
+        hessian = (dalpha { L_trn(w+, alpha) } - dalpha { L_trn(w-, alpha) }) / (2*eps)   公式(8)
         eps = 0.01 / ||dw||
         """
         norm = torch.cat([w.view(-1) for w in dw]).norm()
@@ -90,14 +92,14 @@ class Architect():
         with torch.no_grad():
             for p, d in zip(self.net.weights(), dw):
                 p += eps * d
-        loss = self.net.loss(trn_X, trn_y)
+        loss, _ = self.net.loss(trn_X, trn_y, sent_nums, voice_embeded)
         dalpha_pos = torch.autograd.grad(loss, self.net.alphas()) # dalpha { L_trn(w+) }
 
         # w- = w - eps*dw`
         with torch.no_grad():
             for p, d in zip(self.net.weights(), dw):
                 p -= 2. * eps * d
-        loss = self.net.loss(trn_X, trn_y)
+        loss, _ = self.net.loss(trn_X, trn_y, sent_nums, voice_embeded)
         dalpha_neg = torch.autograd.grad(loss, self.net.alphas()) # dalpha { L_trn(w-) }
 
         # recover w

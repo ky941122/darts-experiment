@@ -3,41 +3,100 @@ import os
 import logging
 import shutil
 import torch
-import torchvision.datasets as dset
 import numpy as np
-import preproc
+from torch.utils.data import Dataset, DataLoader
+import pickle
+
+device = torch.device("cuda")
 
 
-def get_data(dataset, data_path, cutout_length, validation):
-    """ Get torchvision dataset """
-    dataset = dataset.lower()
+class MyDataset(Dataset):
 
-    if dataset == 'cifar10':
-        dset_cls = dset.CIFAR10
-        n_classes = 10
-    elif dataset == 'mnist':
-        dset_cls = dset.MNIST
-        n_classes = 10
-    elif dataset == 'fashionmnist':
-        dset_cls = dset.FashionMNIST
-        n_classes = 10
-    else:
-        raise ValueError(dataset)
+    def __init__(self, data_dir):
 
-    trn_transform, val_transform = preproc.data_transforms(dataset, cutout_length)
-    trn_data = dset_cls(root=data_path, train=True, download=True, transform=trn_transform)
+        self.sent_idx_list = []
+        self.voice_embed_list = []
+        self.word_num_per_sent_list = []
+        self.sent_num_per_example_list = []
+        self.label_list = []
 
-    # assuming shape is NHW or NHWC
-    shape = trn_data.train_data.shape
-    input_channels = 3 if len(shape) == 4 else 1
-    assert shape[1] == shape[2], "not expected shape = {}".format(shape)
-    input_size = shape[1]
+        file_list = os.listdir(data_dir)
+        file_list = [file for file in file_list if file.endswith(".pkl")]
 
-    ret = [input_size, input_channels, n_classes, trn_data]
-    if validation: # append validation data
-        ret.append(dset_cls(root=data_path, train=False, download=True, transform=val_transform))
+        for pkl_file in file_list:
+            file_path = os.path.join(data_dir, pkl_file)
+            f = open(file_path, 'rb')
+            course_datas = pickle.load(f)
+            f.close()
 
-    return ret
+            course_voice_embed, course_sent_word_idx, course_sent_word_num, course_sent_label, course_window_length = course_datas
+
+            course_window_length = [[l] for l in course_window_length]
+
+            self.voice_embed_list += course_voice_embed
+            self.sent_idx_list += course_sent_word_idx
+            self.word_num_per_sent_list += course_sent_word_num
+            self.label_list += course_sent_label
+            self.sent_num_per_example_list += course_window_length
+
+        assert len(self.sent_idx_list) == len(self.voice_embed_list) == len(self.word_num_per_sent_list) == len(self.sent_num_per_example_list) == len(self.label_list)
+
+
+    def __getitem__(self, index):
+
+        sent_idx = self.sent_idx_list[index]
+        voice_embed = self.voice_embed_list[index]
+        word_num_per_sent = self.word_num_per_sent_list[index]
+        sent_num_per_example = self.sent_num_per_example_list[index]
+        label = self.label_list[index]
+
+        return torch.LongTensor(sent_idx), torch.FloatTensor(voice_embed), \
+               torch.LongTensor(word_num_per_sent), torch.LongTensor(sent_num_per_example),\
+               torch.LongTensor(label)
+
+    def __len__(self):
+        return len(self.label_list)
+
+
+class DataProvider:
+
+    def __init__(self, batch_size, dataset, is_cuda):
+
+        self.batch_size = batch_size
+        self.dataset = dataset
+        self.is_cuda = is_cuda
+
+        self.dataiter = None
+        self.iteration = 0
+        self.epoch = 0
+
+    def build(self):
+
+        # print("Building DataIterator...")
+
+        dataloader = DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True, num_workers=0, drop_last=True)
+        self.dataiter = dataloader.__iter__()
+
+    def next(self):
+
+        if self.dataiter is None:
+            self.build()
+        try:
+            batch = self.dataiter.next()
+            self.iteration += 1
+
+            if self.is_cuda:
+                batch = [batch[i].to(device) for i in range(len(batch))]
+            return batch
+        except StopIteration:
+            self.epoch += 1
+            self.build()
+            self.iteration += 1
+
+            batch = self.dataiter.next()
+            if self.is_cuda:
+                batch = [batch[i].to(device) for i in range(len(batch))]
+            return batch
 
 
 def get_logger(file_path):

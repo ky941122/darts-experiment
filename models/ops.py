@@ -13,7 +13,7 @@ OPS = {
     'sep_conv_3x3': lambda C, stride, affine: SepConv(C, C, 3, stride, 1, affine=affine),
     'sep_conv_5x5': lambda C, stride, affine: SepConv(C, C, 5, stride, 2, affine=affine),
     'sep_conv_7x7': lambda C, stride, affine: SepConv(C, C, 7, stride, 3, affine=affine),
-    'dil_conv_3x3': lambda C, stride, affine: DilConv(C, C, 3, stride, 2, 2, affine=affine), # 5x5
+    'dil_conv_3x3': lambda C, stride, affine: DilConv(C, C, kernel_size=3, stride=stride, padding=2, dilation=2, affine=affine), # 5x5
     'dil_conv_5x5': lambda C, stride, affine: DilConv(C, C, 5, stride, 4, 2, affine=affine), # 9x9
     'conv_7x1_1x7': lambda C, stride, affine: FacConv(C, C, 7, stride, 3, affine=affine)
 }
@@ -58,9 +58,9 @@ class PoolBN(nn.Module):
         """
         super().__init__()
         if pool_type.lower() == 'max':
-            self.pool = nn.MaxPool2d(kernel_size, stride, padding)
+            self.pool = nn.MaxPool2d(kernel_size, stride=(1, stride), padding=padding)
         elif pool_type.lower() == 'avg':
-            self.pool = nn.AvgPool2d(kernel_size, stride, padding, count_include_pad=False)
+            self.pool = nn.AvgPool2d(kernel_size, stride=(1, stride), padding=padding, count_include_pad=False)
         else:
             raise ValueError()
 
@@ -80,7 +80,8 @@ class StdConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(C_in, C_out, kernel_size, stride, padding, bias=False),
+            nn.ConstantPad2d((0, 0, kernel_size-1, 0), 0.0),
+            nn.Conv2d(C_in, C_out, kernel_size, stride=(1, stride), padding=0, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
         )
 
@@ -96,8 +97,9 @@ class FacConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(C_in, C_in, (kernel_length, 1), stride, padding, bias=False),
-            nn.Conv2d(C_in, C_out, (1, kernel_length), stride, padding, bias=False),
+            nn.ConstantPad2d((0, 0, kernel_length - 1, 0), 0.0),
+            nn.Conv2d(C_in, C_in, (kernel_length, 1), stride=(1, stride), padding=0, bias=False),
+            nn.Conv2d(C_in, C_out, (1, kernel_length), stride=(1, stride), padding=0, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
         )
 
@@ -116,7 +118,8 @@ class DilConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(C_in, C_in, kernel_size, stride, padding, dilation=dilation, groups=C_in,
+            nn.ConstantPad2d(((kernel_size-1)*dilation//2, (kernel_size-1)*dilation//2, (kernel_size-1)*dilation, 0), 0.0),
+            nn.Conv2d(C_in, C_in, kernel_size, stride=(1, stride), padding=0, dilation=dilation, groups=C_in,
                       bias=False),
             nn.Conv2d(C_in, C_out, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
@@ -159,7 +162,7 @@ class Zero(nn.Module):
             return x * 0.
 
         # re-sizing by stride
-        return x[:, :, ::self.stride, ::self.stride] * 0.
+        return x[:, :, :, ::self.stride] * 0.
 
 
 class FactorizedReduce(nn.Module):
@@ -169,13 +172,13 @@ class FactorizedReduce(nn.Module):
     def __init__(self, C_in, C_out, affine=True):
         super().__init__()
         self.relu = nn.ReLU()
-        self.conv1 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
-        self.conv2 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.conv1 = nn.Conv2d(C_in, C_out // 2, 1, stride=(1, 2), padding=0, bias=False)
+        self.conv2 = nn.Conv2d(C_in, C_out // 2, 1, stride=(1, 2), padding=0, bias=False)
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
 
     def forward(self, x):
         x = self.relu(x)
-        out = torch.cat([self.conv1(x), self.conv2(x[:, :, 1:, 1:])], dim=1)
+        out = torch.cat([self.conv1(x), self.conv2(x[:, :, :, 1:])], dim=1)  # x的W维度，即最后一个维度，得是偶数，如果是奇数则无法concat。
         out = self.bn(out)
         return out
 
@@ -196,3 +199,4 @@ class MixedOp(nn.Module):
             weights: weight for each operation
         """
         return sum(w * op(x) for w, op in zip(weights, self._ops))
+
